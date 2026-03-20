@@ -3,12 +3,18 @@
 
 constexpr char WIFI_SSID[] = "ESP-32";
 constexpr char WIFI_PASSWORD[] = "123456789";
+constexpr uint8_t TOUCH_PIN = 4;
+constexpr uint16_t TOUCH_THRESHOLD = 30;
+constexpr unsigned long DEBOUNCE_DELAY_MS = 250;
 
 WebServer server(80);
 
-void handleRoot() {
-  server.send(200, "text/html; charset=utf-8",
-              R"rawliteral(
+uint32_t touchCount = 0;
+bool touchActive = false;
+unsigned long lastTouchAt = 0;
+
+String renderPage() {
+  String html = R"rawliteral(
 <!DOCTYPE html>
 <html lang="fr">
   <head>
@@ -63,6 +69,7 @@ void handleRoot() {
       .card {
         position: relative;
         z-index: 1;
+        min-width: min(22rem, calc(100vw - 2rem));
         padding: 2.5rem 3.5rem;
         border-radius: 1.75rem;
         background: rgba(255, 255, 255, 0.14);
@@ -72,24 +79,84 @@ void handleRoot() {
         text-align: center;
       }
 
+      .label {
+        margin: 0 0 0.75rem;
+        font-size: 0.95rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(248, 250, 252, 0.8);
+      }
+
       h1 {
         margin: 0;
         font-size: clamp(3rem, 10vw, 5.5rem);
         font-weight: 800;
         letter-spacing: 0.08em;
-        text-transform: uppercase;
         color: #f8fafc;
         text-shadow: 0 10px 30px rgba(15, 23, 42, 0.35);
+      }
+
+      .hint {
+        margin: 1rem 0 0;
+        font-size: 0.95rem;
+        color: rgba(248, 250, 252, 0.78);
       }
     </style>
   </head>
   <body>
     <main class="card">
-      <h1>bonjour</h1>
+      <p class="label">Compteur GPIO4</p>
+      <h1 id="counter">0</h1>
+      <p class="hint">Touchez GPIO4 pour incrémenter le compteur.</p>
     </main>
+
+    <script>
+      async function refreshCounter() {
+        try {
+          const response = await fetch('/count');
+          if (!response.ok) {
+            return;
+          }
+
+          const data = await response.json();
+          document.getElementById('counter').textContent = data.count;
+        } catch (error) {
+          console.error('Lecture du compteur impossible', error);
+        }
+      }
+
+      refreshCounter();
+      setInterval(refreshCounter, 500);
+    </script>
   </body>
 </html>
-)rawliteral");
+)rawliteral";
+
+  return html;
+}
+
+void handleRoot() {
+  server.send(200, "text/html; charset=utf-8", renderPage());
+}
+
+void handleCount() {
+  server.send(200, "application/json", String("{\"count\":") + touchCount + "}");
+}
+
+void updateTouchCounter() {
+  const unsigned long now = millis();
+  const bool isTouched = touchRead(TOUCH_PIN) < TOUCH_THRESHOLD;
+
+  if (isTouched && !touchActive && (now - lastTouchAt >= DEBOUNCE_DELAY_MS)) {
+    touchActive = true;
+    lastTouchAt = now;
+    ++touchCount;
+    Serial.print("Compteur GPIO4: ");
+    Serial.println(touchCount);
+  } else if (!isTouched && touchActive) {
+    touchActive = false;
+  }
 }
 
 void setup() {
@@ -109,12 +176,14 @@ void setup() {
   Serial.println(WIFI_PASSWORD);
   Serial.print("Adresse IP: ");
   Serial.println(ip);
-  Serial.println("Bonjour");
+  Serial.println("Compteur GPIO4 initialise a 0");
 
   server.on("/", handleRoot);
+  server.on("/count", handleCount);
   server.begin();
 }
 
 void loop() {
+  updateTouchCounter();
   server.handleClient();
 }
