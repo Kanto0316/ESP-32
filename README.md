@@ -4,8 +4,9 @@ Ce projet contient un sketch Arduino pour ESP32 qui :
 
 - crée un point d'accès Wi-Fi nommé `ESP-32` ;
 - utilise le mot de passe `123456789` ;
-- affiche `Bonjour` sur le moniteur série ;
-- affiche `Bonjour` dans un navigateur en visitant l'adresse IP de l'ESP32.
+- affiche un compteur initialisé à `0` sur le moniteur série ;
+- affiche un compteur dans un navigateur en visitant l'adresse IP de l'ESP32 ;
+- incrémente ce compteur lorsqu'on touche `GPIO4` (broche tactile T0).
 
 ## Utilisation
 
@@ -13,4 +14,5 @@ Ce projet contient un sketch Arduino pour ESP32 qui :
 2. Sélectionnez une carte ESP32.
 3. Téléversez le sketch.
 4. Connectez-vous au Wi-Fi `ESP-32` avec le mot de passe `123456789`.
-5. Ouvrez l'adresse `192.168.4.1` pour voir le message `Bonjour`.
+5. Ouvrez l'adresse `192.168.4.1` pour voir le compteur, initialisé à `0`.
+6. Touchez `GPIO4` pour incrémenter le compteur affiché dans la page.
