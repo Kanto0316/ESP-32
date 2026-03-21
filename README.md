@@ -1,71 +1,110 @@
-# Compteur rapide ESP32
+# ESP32 WebRTC camera relay
 
-Ce projet a été entièrement refait pour transformer l'ESP32 en **borne Wi-Fi affichant un compteur automatique**.
+Ce projet transforme totalement le sketch d'origine en un **serveur de signalisation WebRTC léger pour ESP32**.
 
-## Fonctionnalités
+L'ESP32 :
 
-- L'ESP32 crée son propre point d'accès Wi-Fi :
-  - **SSID :** `ESP32-COUNTER`
-  - **Mot de passe :** `12345678`
-- L'ESP32 héberge une interface web sur `http://192.168.4.1`
-- La page affiche un **comptage rapide partagé** qui augmente automatiquement pour tous les clients connectés
-- Le délai entre chaque incrémentation est fixé à **200 ms**
-- L'interface inclut :
-  - un affichage géant du nombre courant
-  - un bouton **Pause / Reprendre**
-  - un bouton **Réinitialiser**
-  - un bouton **+10**
-  - un affichage du temps écoulé
+- crée un point d'accès Wi‑Fi local ;
+- héberge une interface web mobile ;
+- relaie les messages WebSocket nécessaires à WebRTC ;
+- **ne traite jamais la vidéo**.
+
+La vidéo circule directement entre les téléphones via **WebRTC peer-to-peer**.
+
+## Architecture
+
+- **ESP32 = point d'accès Wi‑Fi + serveur HTTP + serveur WebSocket de signalisation**
+- **Téléphone A = émetteur vidéo** avec `getUserMedia()`
+- **Téléphone B (et plus) = récepteur vidéo** avec `RTCPeerConnection`
+- **Messages échangés via WebSocket :**
+  - enregistrement du rôle (`camera` / `viewer`)
+  - demande de visualisation
+  - `offer` / `answer`
+  - candidats ICE
+  - déconnexion d'un pair
+
+## Réseau Wi‑Fi
+
+- **SSID :** `ESP32-CAM`
+- **Mot de passe :** `12345678`
+- **URL locale :** `http://192.168.4.1`
 
 ## Fichiers
 
-- `esp32_bonjour.ino` - sketch Arduino principal avec l'interface web intégrée
-- `README.md` - documentation du projet
+- `esp32_bonjour.ino` : sketch Arduino complet, avec page HTML intégrée dans le firmware.
+- `README.md` : guide d'utilisation.
 
-## Bibliothèques requises
+## Bibliothèques Arduino nécessaires
 
-Installez ces bibliothèques dans l'IDE Arduino avant le téléversement :
+Installez les bibliothèques suivantes avant compilation :
 
-- **ESPAsyncWebServer**
-- **AsyncTCP**
-
-Sélectionnez également une **carte ESP32** compatible dans l'IDE Arduino ou PlatformIO.
+- `ESPAsyncWebServer`
+- `AsyncTCP`
+- le support de carte **ESP32** dans l'IDE Arduino ou PlatformIO
 
 ## Fonctionnement
 
-1. L'ESP32 démarre en **mode point d'accès**.
-2. Un téléphone ou un ordinateur se connecte au réseau Wi-Fi `ESP32-COUNTER`.
-3. Le navigateur ouvre `http://192.168.4.1`.
-4. La page affiche immédiatement un compteur automatique partagé entre tous les navigateurs connectés.
-5. Le nombre augmente toutes les **200 millisecondes**.
-6. Si un utilisateur met le compteur en pause, le changement est visible partout.
+1. L'ESP32 démarre en mode **Access Point**.
+2. Les smartphones se connectent au Wi‑Fi `ESP32-CAM`.
+3. Chaque téléphone ouvre `http://192.168.4.1`.
+4. **Phone A** appuie sur **Start Camera** pour publier sa caméra.
+5. **Phone B** appuie sur **View Camera** pour recevoir le flux.
+6. L'ESP32 relaie les messages WebSocket de signalisation.
+7. Une connexion WebRTC directe s'établit entre les deux appareils.
+8. D'autres viewers peuvent aussi se connecter : chaque viewer obtient une connexion pair-à-pair dédiée avec le téléphone caméra.
 
-## Téléversement
+## Utilisation détaillée
+
+### 1. Téléversement
 
 1. Ouvrez `esp32_bonjour.ino` dans l'IDE Arduino.
-2. Installez les bibliothèques suivantes :
-   - `ESPAsyncWebServer`
-   - `AsyncTCP`
-3. Choisissez votre carte ESP32 dans **Outils > Type de carte**.
-4. Sélectionnez le bon port série.
-5. Cliquez sur **Téléverser**.
-6. Ouvrez le **Moniteur série** à `115200` bauds.
+2. Vérifiez que les bibliothèques `ESPAsyncWebServer` et `AsyncTCP` sont installées.
+3. Sélectionnez votre carte ESP32.
+4. Choisissez le bon port série.
+5. Téléversez le sketch.
+6. Ouvrez le moniteur série à `115200` bauds.
 
-## Utilisation
+### 2. Connexion
 
-1. Connectez-vous au réseau Wi-Fi :
-   - **SSID :** `ESP32-COUNTER`
-   - **Mot de passe :** `12345678`
-2. Ouvrez un navigateur à l'adresse suivante :
-   - `http://192.168.4.1`
-3. Regardez le compteur défiler avec un intervalle de **200 ms**.
-4. Utilisez les boutons pour mettre en pause, relancer ou réinitialiser le comptage partagé.
-5. Toute action effectuée depuis un client est immédiatement synchronisée avec les autres appareils connectés.
+1. Connectez les deux smartphones au réseau Wi‑Fi `ESP32-CAM`.
+2. Saisissez `http://192.168.4.1` dans le navigateur sur chaque appareil.
 
-## Vérification rapide
+### 3. Téléphone caméra
 
-L'endpoint suivant permet de confirmer que le mode compteur est actif :
+1. Sur le téléphone A, appuyez sur **Start Camera**.
+2. Autorisez l'accès à la caméra.
+3. Le téléphone devient la **source vidéo**.
 
-- `http://192.168.4.1/health`
+### 4. Téléphone viewer
 
-Il retourne un JSON confirmant le statut du serveur, la valeur du délai et le fait que l'état est partagé.
+1. Sur le téléphone B, appuyez sur **View Camera**.
+2. Le téléphone envoie une demande de stream au téléphone caméra.
+3. Quand l'offre WebRTC arrive, le flux s'affiche dans la zone vidéo distante.
+
+## Endpoint de vérification
+
+- `GET /health`
+
+Réponse JSON typique :
+
+```json
+{
+  "status": "ok",
+  "mode": "webrtc-signaling",
+  "ssid": "ESP32-CAM",
+  "broadcasterOnline": false,
+  "viewerCount": 0
+}
+```
+
+## Limite importante côté navigateur
+
+WebRTC fonctionne bien en réseau local, mais **l'accès caméra via `getUserMedia()` dépend des règles de sécurité du navigateur**.
+
+À savoir :
+
+- beaucoup de navigateurs mobiles exigent un contexte sécurisé pour la caméra ;
+- sur certaines plateformes, une page HTTP locale servie par l'ESP32 peut être bloquée pour la capture caméra ;
+- en pratique, **Android est généralement plus simple à tester** que certains navigateurs iPhone/iOS sur HTTP local.
+
+Le code fourni implémente l'architecture demandée dans **un seul fichier principal `.ino`** : **ESP32 pour la signalisation, WebRTC pour la vidéo P2P**, sans dépendre d'Internet.
