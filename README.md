@@ -1,27 +1,26 @@
-# Chat WebSocket ESP32
+# Compteur rapide ESP32
 
-Ce projet contient un système de chat complet pour ESP32, développé avec le **framework Arduino**, **AsyncTCP** et **ESPAsyncWebServer**.
+Ce projet a été entièrement refait pour transformer l'ESP32 en **borne Wi-Fi affichant un compteur automatique**.
 
 ## Fonctionnalités
 
 - L'ESP32 crée son propre point d'accès Wi-Fi :
-  - **SSID :** `ESP32-CHAT`
+  - **SSID :** `ESP32-COUNTER`
   - **Mot de passe :** `12345678`
-- L'ESP32 héberge une interface de chat web adaptée aux mobiles sur `http://192.168.4.1`
-- Utilise un **serveur WebSocket** directement hébergé sur l'ESP32
-- Plusieurs téléphones ou navigateurs peuvent se connecter en même temps
-- Les messages sont diffusés en temps réel à tous les clients connectés
-- Chaque utilisateur voit :
-  - un numéro de client attribué par l'ESP32
-  - un nom d'utilisateur optionnel
-  - les nouveaux messages sans recharger la page
-  - un défilement automatique de la conversation
-- Inclut des notifications système lors de l'arrivée et du départ des clients
+- L'ESP32 héberge une interface web sur `http://192.168.4.1`
+- La page affiche un **comptage rapide** qui augmente automatiquement
+- Le délai entre chaque incrémentation est fixé à **400 ms**
+- L'interface inclut :
+  - un affichage géant du nombre courant
+  - un bouton **Pause / Reprendre**
+  - un bouton **Réinitialiser**
+  - un bouton **+10**
+  - un affichage du temps écoulé
 
 ## Fichiers
 
-- `esp32_bonjour.ino` - sketch Arduino ESP32 complet
-- `index.html` - copie autonome de l'interface web utilisée par le sketch
+- `esp32_bonjour.ino` - sketch Arduino principal avec l'interface web intégrée
+- `README.md` - documentation du projet
 
 ## Bibliothèques requises
 
@@ -30,41 +29,41 @@ Installez ces bibliothèques dans l'IDE Arduino avant le téléversement :
 - **ESPAsyncWebServer**
 - **AsyncTCP**
 
-Sélectionnez également une **carte ESP32** dans l'IDE Arduino ou PlatformIO.
+Sélectionnez également une **carte ESP32** compatible dans l'IDE Arduino ou PlatformIO.
 
 ## Fonctionnement
 
 1. L'ESP32 démarre en **mode point d'accès**.
-2. Les téléphones se connectent au réseau Wi-Fi `ESP32-CHAT`.
+2. Un téléphone ou un ordinateur se connecte au réseau Wi-Fi `ESP32-COUNTER`.
 3. Le navigateur ouvre `http://192.168.4.1`.
-4. La page se connecte au point d'entrée WebSocket `/ws` de l'ESP32.
-5. Chaque message envoyé par un client est diffusé en temps réel à tous les autres clients connectés.
+4. La page affiche immédiatement un compteur automatique.
+5. Le nombre augmente toutes les **400 millisecondes**.
 
 ## Téléversement
 
 1. Ouvrez `esp32_bonjour.ino` dans l'IDE Arduino.
-2. Installez les bibliothèques requises :
+2. Installez les bibliothèques suivantes :
    - `ESPAsyncWebServer`
    - `AsyncTCP`
-3. Allez dans **Outils > Type de carte** et choisissez votre carte ESP32.
+3. Choisissez votre carte ESP32 dans **Outils > Type de carte**.
 4. Sélectionnez le bon port série.
 5. Cliquez sur **Téléverser**.
 6. Ouvrez le **Moniteur série** à `115200` bauds.
-7. Attendez que l'ESP32 affiche les informations du point d'accès.
 
 ## Utilisation
 
-1. Sur votre téléphone, connectez-vous au réseau Wi-Fi :
-   - **SSID :** `ESP32-CHAT`
+1. Connectez-vous au réseau Wi-Fi :
+   - **SSID :** `ESP32-COUNTER`
    - **Mot de passe :** `12345678`
-2. Ouvrez un navigateur et allez sur :
+2. Ouvrez un navigateur à l'adresse suivante :
    - `http://192.168.4.1`
-3. Saisissez éventuellement un nom d'utilisateur.
-4. Tapez un message puis appuyez sur **Envoyer**.
-5. Ouvrez la même page sur d'autres téléphones pour discuter en temps réel.
+3. Regardez le compteur défiler avec un intervalle de **400 ms**.
+4. Utilisez les boutons pour mettre en pause, relancer ou réinitialiser le comptage.
 
-## Notes
+## Vérification rapide
 
-- Le numéro de client est attribué par l'ESP32 lorsqu'un navigateur se connecte.
-- Les horodatages sont affichés dans l'interface du navigateur.
-- L'interface web est intégrée directement dans le sketch `.ino` et également fournie dans un fichier `index.html` séparé pour faciliter les modifications.
+L'endpoint suivant permet de confirmer que le mode compteur est actif :
+
+- `http://192.168.4.1/health`
+
+Il retourne un JSON confirmant le statut du serveur ainsi que la valeur du délai.
