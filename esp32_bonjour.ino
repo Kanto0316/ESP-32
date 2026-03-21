@@ -1,26 +1,13 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <WiFi.h>
-#include <cctype>
 
-constexpr char WIFI_SSID[] = "ESP32-CHAT";
+constexpr char WIFI_SSID[] = "ESP32-COUNTER";
 constexpr char WIFI_PASSWORD[] = "12345678";
-constexpr char WEBSOCKET_PATH[] = "/ws";
 constexpr uint16_t HTTP_PORT = 80;
-constexpr size_t MAX_MESSAGE_LENGTH = 280;
-constexpr size_t MAX_CLIENTS = 32;
+constexpr unsigned long COUNT_DELAY_MS = 400;
 
 AsyncWebServer server(HTTP_PORT);
-AsyncWebSocket ws(WEBSOCKET_PATH);
-uint32_t nextClientNumber = 1;
-
-struct ClientInfo {
-  uint32_t socketId;
-  uint32_t clientNumber;
-};
-
-ClientInfo clientInfos[MAX_CLIENTS];
-size_t clientInfoCount = 0;
 
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
@@ -28,19 +15,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Chat ESP32</title>
+    <title>Compteur rapide ESP32</title>
     <style>
       :root {
         color-scheme: dark;
-        --bg: #09111f;
-        --panel: rgba(15, 23, 42, 0.88);
-        --panel-border: rgba(148, 163, 184, 0.16);
-        --accent: #38bdf8;
+        --bg: #020617;
+        --panel: rgba(15, 23, 42, 0.92);
+        --accent: #22d3ee;
         --accent-strong: #0ea5e9;
         --text: #e2e8f0;
         --muted: #94a3b8;
         --success: #22c55e;
-        --system: #f59e0b;
         font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
 
@@ -51,202 +36,137 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       body {
         margin: 0;
         min-height: 100vh;
-        background:
-          radial-gradient(circle at top left, rgba(14, 165, 233, 0.26), transparent 30%),
-          radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.22), transparent 35%),
-          linear-gradient(180deg, #020617 0%, #09111f 100%);
+        display: grid;
+        place-items: center;
+        padding: 20px;
         color: var(--text);
-        display: flex;
-        align-items: stretch;
-        justify-content: center;
-        padding: 16px;
+        background:
+          radial-gradient(circle at top, rgba(34, 211, 238, 0.24), transparent 30%),
+          radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.2), transparent 28%),
+          linear-gradient(180deg, #020617 0%, #0f172a 100%);
       }
 
       .app {
-        width: min(100%, 720px);
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      .card {
+        width: min(100%, 760px);
         background: var(--panel);
-        border: 1px solid var(--panel-border);
-        border-radius: 24px;
-        backdrop-filter: blur(18px);
-        box-shadow: 0 18px 60px rgba(2, 6, 23, 0.4);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: 28px;
+        padding: 28px;
+        box-shadow: 0 24px 80px rgba(2, 6, 23, 0.45);
       }
 
-      .header {
-        padding: 20px;
-      }
-
-      .header h1 {
+      h1 {
         margin: 0;
-        font-size: clamp(1.6rem, 5vw, 2.2rem);
+        font-size: clamp(1.9rem, 5vw, 3rem);
       }
 
-      .subline {
-        margin-top: 8px;
+      .subtitle {
+        margin: 10px 0 0;
         color: var(--muted);
-        font-size: 0.95rem;
+        line-height: 1.5;
       }
 
-      .status-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 16px;
+      .hero {
+        margin-top: 24px;
+        display: grid;
+        gap: 18px;
       }
 
-      .badge {
+      .counter-card {
+        padding: 28px;
+        border-radius: 24px;
+        text-align: center;
+        background: linear-gradient(145deg, rgba(8, 47, 73, 0.9), rgba(15, 23, 42, 0.95));
+        border: 1px solid rgba(34, 211, 238, 0.22);
+      }
+
+      .label {
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .count {
+        margin: 16px 0;
+        font-size: clamp(4rem, 16vw, 8rem);
+        font-weight: 800;
+        line-height: 1;
+        color: white;
+      }
+
+      .timer {
         display: inline-flex;
         align-items: center;
-        gap: 8px;
-        padding: 10px 14px;
+        gap: 10px;
+        padding: 10px 16px;
         border-radius: 999px;
-        background: rgba(15, 23, 42, 0.85);
+        background: rgba(15, 23, 42, 0.72);
         border: 1px solid rgba(148, 163, 184, 0.14);
-        color: var(--text);
-        font-size: 0.9rem;
       }
 
       .dot {
-        width: 10px;
-        height: 10px;
+        width: 12px;
+        height: 12px;
         border-radius: 50%;
-        background: #ef4444;
-      }
-
-      .dot.connected {
         background: var(--success);
-        box-shadow: 0 0 10px rgba(34, 197, 94, 0.8);
+        box-shadow: 0 0 12px rgba(34, 197, 94, 0.75);
       }
 
-      .chat-shell {
-        display: flex;
-        flex-direction: column;
-        min-height: 66vh;
-        overflow: hidden;
-      }
-
-      .messages {
-        flex: 1;
-        overflow-y: auto;
-        padding: 18px;
-        display: flex;
-        flex-direction: column;
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 12px;
-        scroll-behavior: smooth;
       }
 
-      .message {
-        padding: 14px 16px;
+      button {
+        border: 0;
+        border-radius: 16px;
+        padding: 16px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        color: white;
+        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      }
+
+      button.secondary {
+        background: rgba(30, 41, 59, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+      }
+
+      .info-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .info-box {
+        padding: 18px;
         border-radius: 18px;
-        background: rgba(15, 23, 42, 0.9);
+        background: rgba(15, 23, 42, 0.78);
         border: 1px solid rgba(148, 163, 184, 0.12);
       }
 
-      .message.system {
-        border-left: 4px solid var(--system);
-        background: rgba(120, 53, 15, 0.18);
+      .info-box strong {
+        display: block;
+        margin-top: 8px;
+        font-size: 1.2rem;
       }
 
-      .message.own {
-        border-left: 4px solid var(--accent);
-        background: rgba(2, 132, 199, 0.18);
-      }
-
-      .meta {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        margin-bottom: 8px;
-        font-size: 0.82rem;
+      .footer-note {
+        margin-top: 18px;
         color: var(--muted);
-      }
-
-      .sender {
-        color: #f8fafc;
-        font-weight: 700;
-      }
-
-      .text {
-        white-space: pre-wrap;
-        word-break: break-word;
-        line-height: 1.45;
-      }
-
-      .composer {
-        display: grid;
-        gap: 12px;
-        padding: 18px;
-        border-top: 1px solid rgba(148, 163, 184, 0.12);
-        background: rgba(2, 6, 23, 0.35);
-      }
-
-      .field-row {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 10px;
-      }
-
-      input,
-      button {
-        width: 100%;
-        border: 0;
-        border-radius: 14px;
-        padding: 14px 16px;
-        font: inherit;
-      }
-
-      input {
-        background: rgba(15, 23, 42, 0.92);
-        color: var(--text);
-        border: 1px solid rgba(148, 163, 184, 0.14);
-        outline: none;
-      }
-
-      input:focus {
-        border-color: rgba(56, 189, 248, 0.7);
-        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.16);
-      }
-
-      .send-row {
-        display: grid;
-        grid-template-columns: 1fr auto;
-        gap: 10px;
-      }
-
-      button {
-        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-        color: white;
-        font-weight: 700;
-        cursor: pointer;
-        min-width: 110px;
-      }
-
-      button:disabled {
-        cursor: not-allowed;
-        opacity: 0.65;
-      }
-
-      .helper {
-        color: var(--muted);
-        font-size: 0.84rem;
+        text-align: center;
       }
 
       @media (max-width: 640px) {
-        body {
-          padding: 10px;
+        .app {
+          padding: 20px;
         }
 
-        .chat-shell {
-          min-height: 72vh;
-        }
-
-        .send-row {
+        .controls,
+        .info-grid {
           grid-template-columns: 1fr;
         }
       }
@@ -254,398 +174,110 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   </head>
   <body>
     <main class="app">
-      <section class="card header">
-        <h1>Chat WebSocket ESP32</h1>
-        <p class="subline">Connectez-vous au Wi-Fi <strong>ESP32-CHAT</strong> puis ouvrez <strong>192.168.4.1</strong>.</p>
-        <div class="status-row">
-          <div class="badge"><span class="dot" id="status-dot"></span><span id="status-text">Connexion...</span></div>
-          <div class="badge">Votre ID : <strong id="client-id">En attente...</strong></div>
+      <h1>Compteur rapide ESP32</h1>
+      <p class="subtitle">
+        Cette version du projet a été entièrement transformée pour afficher un comptage automatique
+        très rapide avec un intervalle fixe de <strong>400 ms</strong> entre chaque valeur.
+      </p>
+
+      <section class="hero">
+        <article class="counter-card">
+          <div class="label">Valeur courante</div>
+          <div class="count" id="count">0</div>
+          <div class="timer">
+            <span class="dot"></span>
+            <span id="status">Comptage actif · 400 ms entre chaque nombre</span>
+          </div>
+        </article>
+
+        <div class="controls">
+          <button id="toggle-button" type="button">Pause</button>
+          <button id="reset-button" class="secondary" type="button">Réinitialiser</button>
+          <button id="boost-button" class="secondary" type="button">+10</button>
+        </div>
+
+        <div class="info-grid">
+          <div class="info-box">
+            Intervalle configuré
+            <strong>400 ms</strong>
+          </div>
+          <div class="info-box">
+            Temps écoulé
+            <strong id="elapsed">0.0 s</strong>
+          </div>
         </div>
       </section>
 
-      <section class="card chat-shell">
-        <div class="messages" id="messages"></div>
-
-        <form class="composer" id="chat-form">
-          <div class="field-row">
-            <input id="username" type="text" maxlength="24" placeholder="Nom d'utilisateur (optionnel)" autocomplete="nickname" />
-          </div>
-          <div class="send-row">
-            <input id="message" type="text" maxlength="280" placeholder="Tapez votre message..." autocomplete="off" required />
-            <button id="send-button" type="submit">Envoyer</button>
-          </div>
-          <div class="helper">Les messages sont envoyés instantanément à tous les téléphones connectés.</div>
-        </form>
-      </section>
+      <p class="footer-note">Connectez-vous au Wi-Fi <strong>ESP32-COUNTER</strong> puis ouvrez <strong>192.168.4.1</strong>.</p>
     </main>
 
     <script>
-      const messagesEl = document.getElementById('messages');
-      const statusDotEl = document.getElementById('status-dot');
-      const statusTextEl = document.getElementById('status-text');
-      const clientIdEl = document.getElementById('client-id');
-      const formEl = document.getElementById('chat-form');
-      const usernameEl = document.getElementById('username');
-      const messageEl = document.getElementById('message');
-      const sendButtonEl = document.getElementById('send-button');
+      const countEl = document.getElementById('count');
+      const statusEl = document.getElementById('status');
+      const elapsedEl = document.getElementById('elapsed');
+      const toggleButtonEl = document.getElementById('toggle-button');
+      const resetButtonEl = document.getElementById('reset-button');
+      const boostButtonEl = document.getElementById('boost-button');
 
-      let socket;
-      let myClientId = 0;
-      let welcomeTimeoutId = 0;
+      const COUNT_DELAY_MS = 400;
+      let count = 0;
+      let running = true;
+      let countIntervalId = 0;
+      let startedAt = Date.now();
 
-      function getWsUrl() {
-        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        return `${protocol}://${window.location.host}/ws`;
+      function render() {
+        countEl.textContent = count.toString();
+        statusEl.textContent = running
+          ? `Comptage actif · ${COUNT_DELAY_MS} ms entre chaque nombre`
+          : 'Comptage en pause';
+        toggleButtonEl.textContent = running ? 'Pause' : 'Reprendre';
       }
 
-      function setConnectionState(connected) {
-        statusDotEl.classList.toggle('connected', connected);
-        statusTextEl.textContent = connected ? 'Connecté' : 'Déconnecté';
-        sendButtonEl.disabled = !connected || myClientId === 0;
+      function updateElapsed() {
+        const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+        elapsedEl.textContent = `${seconds} s`;
       }
 
-      function autoScroll() {
-        messagesEl.scrollTop = messagesEl.scrollHeight;
+      function startCounter() {
+        window.clearInterval(countIntervalId);
+        countIntervalId = window.setInterval(() => {
+          count += 1;
+          render();
+        }, COUNT_DELAY_MS);
       }
 
-      function formatTime(timestamp) {
-        const safeTimestamp = Number(timestamp) > 1000000000000 ? Number(timestamp) : Date.now();
-        const date = new Date(safeTimestamp);
-        return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      }
+      toggleButtonEl.addEventListener('click', () => {
+        running = !running;
 
-      function addMessage(message) {
-        const wrapper = document.createElement('article');
-        const isOwn = message.clientNumber && message.clientNumber === myClientId;
-        wrapper.className = `message${message.type === 'system' ? ' system' : ''}${isOwn ? ' own' : ''}`;
-
-        const meta = document.createElement('div');
-        meta.className = 'meta';
-
-        const sender = document.createElement('span');
-        sender.className = 'sender';
-        sender.textContent = message.type === 'system' ? 'Système' : `${message.sender} · Client n°${message.clientNumber}`;
-
-        const time = document.createElement('span');
-        time.textContent = formatTime(message.timestamp || Date.now());
-
-        const text = document.createElement('div');
-        text.className = 'text';
-        text.textContent = message.text;
-
-        meta.appendChild(sender);
-        meta.appendChild(time);
-        wrapper.appendChild(meta);
-        wrapper.appendChild(text);
-        messagesEl.appendChild(wrapper);
-        autoScroll();
-      }
-
-      function addSystemMessage(text) {
-        addMessage({ type: 'system', sender: 'Système', clientNumber: 0, text, timestamp: Date.now() });
-      }
-
-      function connectWebSocket() {
-        socket = new WebSocket(getWsUrl());
-        clientIdEl.textContent = 'Attribution...';
-        myClientId = 0;
-
-        socket.addEventListener('open', () => {
-          setConnectionState(true);
-          window.clearTimeout(welcomeTimeoutId);
-          welcomeTimeoutId = window.setTimeout(() => {
-            if (myClientId === 0) {
-              clientIdEl.textContent = 'Non attribué';
-              addSystemMessage("Impossible de récupérer votre ID utilisateur. Vérifiez la connexion WebSocket côté ESP32.");
-              setConnectionState(false);
-            }
-          }, 3000);
-        });
-
-        socket.addEventListener('close', () => {
-          window.clearTimeout(welcomeTimeoutId);
-          myClientId = 0;
-          clientIdEl.textContent = 'Déconnecté';
-          setConnectionState(false);
-          addSystemMessage('Connexion perdue. Reconnexion...');
-          window.setTimeout(connectWebSocket, 1500);
-        });
-
-        socket.addEventListener('error', () => {
-          window.clearTimeout(welcomeTimeoutId);
-          setConnectionState(false);
-        });
-
-        socket.addEventListener('message', (event) => {
-          try {
-            const payload = JSON.parse(event.data);
-
-            if (payload.type === 'welcome') {
-              window.clearTimeout(welcomeTimeoutId);
-              myClientId = payload.clientNumber || 0;
-
-              if (myClientId === 0) {
-                clientIdEl.textContent = 'Non attribué';
-                addSystemMessage("Le serveur n'a pas pu attribuer d'ID utilisateur.");
-                setConnectionState(false);
-                return;
-              }
-
-              clientIdEl.textContent = `Client n°${myClientId}`;
-              setConnectionState(true);
-              addSystemMessage(`Vous avez rejoint le chat en tant que client n°${myClientId}.`);
-              return;
-            }
-
-            addMessage(payload);
-          } catch (error) {
-            console.error('Charge utile WebSocket invalide', error);
-          }
-        });
-      }
-
-      formEl.addEventListener('submit', (event) => {
-        event.preventDefault();
-
-        const text = messageEl.value.trim();
-        if (!text || !socket || socket.readyState !== WebSocket.OPEN) {
-          return;
+        if (running) {
+          startCounter();
+        } else {
+          window.clearInterval(countIntervalId);
         }
 
-        const username = usernameEl.value.trim();
-        socket.send(`${username}\t${text}`);
-        messageEl.value = '';
-        messageEl.focus();
+        render();
       });
 
-      addSystemMessage('Connexion au serveur de chat ESP32...');
-      setConnectionState(false);
-      connectWebSocket();
+      resetButtonEl.addEventListener('click', () => {
+        count = 0;
+        startedAt = Date.now();
+        render();
+        updateElapsed();
+      });
+
+      boostButtonEl.addEventListener('click', () => {
+        count += 10;
+        render();
+      });
+
+      render();
+      startCounter();
+      window.setInterval(updateElapsed, 100);
+      updateElapsed();
     </script>
   </body>
 </html>
-
 )rawliteral";
-
-String trimWhitespace(String value) {
-  value.trim();
-  return value;
-}
-
-String sanitizeMessageText(String value) {
-  String cleaned;
-  cleaned.reserve(value.length());
-
-  for (size_t i = 0; i < value.length(); ++i) {
-    const char current = value.charAt(i);
-    if (current == '\r') {
-      continue;
-    }
-
-    if (current == '\n' || isPrintable(static_cast<unsigned char>(current))) {
-      cleaned += current;
-    }
-  }
-
-  cleaned = trimWhitespace(cleaned);
-
-  if (cleaned.length() > MAX_MESSAGE_LENGTH) {
-    cleaned.remove(MAX_MESSAGE_LENGTH);
-  }
-
-  return cleaned;
-}
-
-String sanitizeUsername(String value, uint32_t clientNumber) {
-  String cleaned;
-  cleaned.reserve(value.length());
-
-  for (size_t i = 0; i < value.length(); ++i) {
-    const char current = value.charAt(i);
-    if (isalnum(static_cast<unsigned char>(current)) || current == '_' || current == '-' || current == ' ') {
-      cleaned += current;
-    }
-  }
-
-  cleaned = trimWhitespace(cleaned);
-
-  if (cleaned.isEmpty()) {
-    cleaned = "Invité ";
-    cleaned += clientNumber;
-  }
-
-  if (cleaned.length() > 24) {
-    cleaned.remove(24);
-  }
-
-  return cleaned;
-}
-
-String escapeJson(const String& value) {
-  String escaped;
-  escaped.reserve(value.length() + 8);
-
-  for (size_t i = 0; i < value.length(); ++i) {
-    const char current = value.charAt(i);
-    switch (current) {
-      case '\\': escaped += "\\\\"; break;
-      case '"': escaped += "\\\""; break;
-      case '\n': escaped += "\\n"; break;
-      case '\t': escaped += " "; break;
-      default: escaped += current; break;
-    }
-  }
-
-  return escaped;
-}
-
-int findClientIndex(uint32_t socketId) {
-  for (size_t i = 0; i < clientInfoCount; ++i) {
-    if (clientInfos[i].socketId == socketId) {
-      return static_cast<int>(i);
-    }
-  }
-
-  return -1;
-}
-
-uint32_t getClientNumber(uint32_t socketId) {
-  const int index = findClientIndex(socketId);
-  if (index >= 0) {
-    return clientInfos[index].clientNumber;
-  }
-
-  return 0;
-}
-
-uint32_t registerClient(uint32_t socketId) {
-  const int existingIndex = findClientIndex(socketId);
-  if (existingIndex >= 0) {
-    return clientInfos[existingIndex].clientNumber;
-  }
-
-  if (clientInfoCount >= MAX_CLIENTS) {
-    return 0;
-  }
-
-  const uint32_t clientNumber = nextClientNumber++;
-  clientInfos[clientInfoCount++] = {socketId, clientNumber};
-  return clientNumber;
-}
-
-void unregisterClient(uint32_t socketId) {
-  const int index = findClientIndex(socketId);
-  if (index < 0) {
-    return;
-  }
-
-  for (size_t i = index; i + 1 < clientInfoCount; ++i) {
-    clientInfos[i] = clientInfos[i + 1];
-  }
-
-  --clientInfoCount;
-}
-
-String buildChatPayload(const String& type, uint32_t clientNumber, const String& sender, const String& text) {
-  String payload = "{";
-  payload += "\"type\":\"" + escapeJson(type) + "\",";
-  payload += "\"clientNumber\":" + String(clientNumber) + ",";
-  payload += "\"sender\":\"" + escapeJson(sender) + "\",";
-  payload += "\"text\":\"" + escapeJson(text) + "\",";
-  payload += "\"timestamp\":" + String(millis());
-  payload += "}";
-  return payload;
-}
-
-void broadcastSystemMessage(const String& text) {
-  ws.textAll(buildChatPayload("system", 0, "Système", text));
-}
-
-void sendWelcomeMessage(AsyncWebSocketClient* client, uint32_t clientNumber) {
-  String payload = "{";
-  payload += "\"type\":\"welcome\",";
-  payload += "\"clientNumber\":" + String(clientNumber) + ",";
-  payload += "\"timestamp\":" + String(millis());
-  payload += "}";
-  client->text(payload);
-}
-
-void handleWebSocketMessage(void* arg, uint8_t* data, size_t len, AsyncWebSocketClient* client) {
-  AwsFrameInfo* info = static_cast<AwsFrameInfo*>(arg);
-  if (!info || info->opcode != WS_TEXT || !info->final || info->index != 0) {
-    return;
-  }
-
-  String incoming;
-  incoming.reserve(len);
-  for (size_t i = 0; i < len; ++i) {
-    incoming += static_cast<char>(data[i]);
-  }
-
-  const int separatorIndex = incoming.indexOf('\t');
-
-  String username = separatorIndex >= 0 ? incoming.substring(0, separatorIndex) : "";
-  String message = separatorIndex >= 0 ? incoming.substring(separatorIndex + 1) : incoming;
-
-  const uint32_t clientNumber = getClientNumber(client->id());
-  const String safeUsername = sanitizeUsername(username, clientNumber);
-  const String safeMessage = sanitizeMessageText(message);
-
-  if (safeMessage.isEmpty()) {
-    return;
-  }
-
-  const String payload = buildChatPayload("chat", clientNumber, safeUsername, safeMessage);
-  ws.textAll(payload);
-
-  Serial.print("[CHAT] Client n°");
-  Serial.print(clientNumber);
-  Serial.print(" (");
-  Serial.print(safeUsername);
-  Serial.print("): ");
-  Serial.println(safeMessage);
-}
-
-void onWebSocketEvent(AsyncWebSocket* serverRef, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len) {
-  (void)serverRef;
-
-  switch (type) {
-    case WS_EVT_CONNECT: {
-      const uint32_t clientNumber = registerClient(client->id());
-      if (clientNumber == 0) {
-        Serial.printf("[WS] Client rejected: socketId=%u IP=%s reason=max_clients_reached\n",
-                      client->id(),
-                      client->remoteIP().toString().c_str());
-        client->text("{\"type\":\"system\",\"clientNumber\":0,\"sender\":\"Système\",\"text\":\"Serveur saturé : impossible d'attribuer un ID utilisateur.\",\"timestamp\":" + String(millis()) + "}");
-        client->close();
-        break;
-      }
-
-      Serial.printf("[WS] Client connected: socketId=%u clientNumber=%u IP=%s\n",
-                    client->id(),
-                    clientNumber,
-                    client->remoteIP().toString().c_str());
-      sendWelcomeMessage(client, clientNumber);
-      broadcastSystemMessage("Le client n°" + String(clientNumber) + " a rejoint le chat.");
-      break;
-    }
-    case WS_EVT_DISCONNECT: {
-      const uint32_t clientNumber = getClientNumber(client->id());
-      Serial.printf("[WS] Client disconnected: socketId=%u clientNumber=%u\n", client->id(), clientNumber);
-      unregisterClient(client->id());
-      if (clientNumber != 0) {
-        broadcastSystemMessage("Le client n°" + String(clientNumber) + " a quitté le chat.");
-      }
-      break;
-    }
-    case WS_EVT_DATA:
-      handleWebSocketMessage(arg, data, len, client);
-      break;
-    case WS_EVT_PONG:
-    case WS_EVT_ERROR:
-      break;
-  }
-}
 
 void setupAccessPoint() {
   WiFi.mode(WIFI_AP);
@@ -653,25 +285,25 @@ void setupAccessPoint() {
 
   const IPAddress accessPointIp = WiFi.softAPIP();
   Serial.println();
-  Serial.println("Serveur de chat WebSocket ESP32 démarré");
+  Serial.println("Compteur rapide ESP32 demarre");
   Serial.print("SSID : ");
   Serial.println(WIFI_SSID);
   Serial.print("Mot de passe : ");
   Serial.println(WIFI_PASSWORD);
+  Serial.print("Intervalle entre deux comptes : ");
+  Serial.print(COUNT_DELAY_MS);
+  Serial.println(" ms");
   Serial.print("Ouvrez : http://");
   Serial.println(accessPointIp);
 }
 
 void setupWebServer() {
-  ws.onEvent(onWebSocketEvent);
-  server.addHandler(&ws);
-
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->send_P(200, "text/html", INDEX_HTML);
   });
 
   server.on("/health", HTTP_GET, [](AsyncWebServerRequest* request) {
-    request->send(200, "application/json", "{\"status\":\"ok\"}");
+    request->send(200, "application/json", "{\"status\":\"ok\",\"mode\":\"counter\",\"delayMs\":400}");
   });
 
   server.begin();
@@ -686,5 +318,4 @@ void setup() {
 }
 
 void loop() {
-  ws.cleanupClients();
 }
