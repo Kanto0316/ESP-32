@@ -8,8 +8,8 @@ Ce projet a été entièrement refait pour transformer l'ESP32 en **borne Wi-Fi 
   - **SSID :** `ESP32-COUNTER`
   - **Mot de passe :** `12345678`
 - L'ESP32 héberge une interface web sur `http://192.168.4.1`
-- La page affiche un **comptage rapide** qui augmente automatiquement
-- Le délai entre chaque incrémentation est fixé à **400 ms**
+- La page affiche un **comptage rapide partagé** qui augmente automatiquement pour tous les clients connectés
+- Le délai entre chaque incrémentation est fixé à **200 ms**
 - L'interface inclut :
   - un affichage géant du nombre courant
   - un bouton **Pause / Reprendre**
@@ -36,8 +36,9 @@ Sélectionnez également une **carte ESP32** compatible dans l'IDE Arduino ou Pl
 1. L'ESP32 démarre en **mode point d'accès**.
 2. Un téléphone ou un ordinateur se connecte au réseau Wi-Fi `ESP32-COUNTER`.
 3. Le navigateur ouvre `http://192.168.4.1`.
-4. La page affiche immédiatement un compteur automatique.
-5. Le nombre augmente toutes les **400 millisecondes**.
+4. La page affiche immédiatement un compteur automatique partagé entre tous les navigateurs connectés.
+5. Le nombre augmente toutes les **200 millisecondes**.
+6. Si un utilisateur met le compteur en pause, le changement est visible partout.
 
 ## Téléversement
 
@@ -57,8 +58,9 @@ Sélectionnez également une **carte ESP32** compatible dans l'IDE Arduino ou Pl
    - **Mot de passe :** `12345678`
 2. Ouvrez un navigateur à l'adresse suivante :
    - `http://192.168.4.1`
-3. Regardez le compteur défiler avec un intervalle de **400 ms**.
-4. Utilisez les boutons pour mettre en pause, relancer ou réinitialiser le comptage.
+3. Regardez le compteur défiler avec un intervalle de **200 ms**.
+4. Utilisez les boutons pour mettre en pause, relancer ou réinitialiser le comptage partagé.
+5. Toute action effectuée depuis un client est immédiatement synchronisée avec les autres appareils connectés.
 
 ## Vérification rapide
 
@@ -66,4 +68,4 @@ L'endpoint suivant permet de confirmer que le mode compteur est actif :
 
 - `http://192.168.4.1/health`
 
-Il retourne un JSON confirmant le statut du serveur ainsi que la valeur du délai.
+Il retourne un JSON confirmant le statut du serveur, la valeur du délai et le fait que l'état est partagé.

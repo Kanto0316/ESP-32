@@ -5,9 +5,70 @@
 constexpr char WIFI_SSID[] = "ESP32-COUNTER";
 constexpr char WIFI_PASSWORD[] = "12345678";
 constexpr uint16_t HTTP_PORT = 80;
-constexpr unsigned long COUNT_DELAY_MS = 400;
+constexpr unsigned long COUNT_DELAY_MS = 200;
 
 AsyncWebServer server(HTTP_PORT);
+AsyncWebSocket ws("/ws");
+
+unsigned long count = 0;
+bool running = true;
+unsigned long startedAtMs = 0;
+unsigned long accumulatedElapsedMs = 0;
+unsigned long lastCountUpdateMs = 0;
+
+String buildStateJson() {
+  const unsigned long elapsedMs = accumulatedElapsedMs + (running ? millis() - startedAtMs : 0);
+
+  String payload = "{";
+  payload += "\"count\":";
+  payload += count;
+  payload += ",\"running\":";
+  payload += running ? "true" : "false";
+  payload += ",\"delayMs\":";
+  payload += COUNT_DELAY_MS;
+  payload += ",\"elapsedMs\":";
+  payload += elapsedMs;
+  payload += "}";
+  return payload;
+}
+
+void broadcastState() {
+  ws.textAll(buildStateJson());
+}
+
+void resetCounter() {
+  count = 0;
+  accumulatedElapsedMs = 0;
+  startedAtMs = millis();
+  lastCountUpdateMs = millis();
+}
+
+void setRunning(bool nextRunning) {
+  if (running == nextRunning) {
+    return;
+  }
+
+  if (nextRunning) {
+    startedAtMs = millis();
+    lastCountUpdateMs = millis();
+  } else {
+    accumulatedElapsedMs += millis() - startedAtMs;
+  }
+
+  running = nextRunning;
+}
+
+void handleCommand(const String& command) {
+  if (command == "toggle") {
+    setRunning(!running);
+  } else if (command == "reset") {
+    resetCounter();
+  } else if (command == "boost") {
+    count += 10;
+  }
+
+  broadcastState();
+}
 
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
@@ -177,7 +238,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <h1>Compteur rapide ESP32</h1>
       <p class="subtitle">
         Cette version du projet a été entièrement transformée pour afficher un comptage automatique
-        très rapide avec un intervalle fixe de <strong>400 ms</strong> entre chaque valeur.
+        partagé entre tous les appareils connectés, avec un intervalle fixe de <strong>200 ms</strong>
+        entre chaque valeur.
       </p>
 
       <section class="hero">
@@ -186,7 +248,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
           <div class="count" id="count">0</div>
           <div class="timer">
             <span class="dot"></span>
-            <span id="status">Comptage actif · 400 ms entre chaque nombre</span>
+            <span id="status">Connexion en cours...</span>
           </div>
         </article>
 
@@ -199,7 +261,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <div class="info-grid">
           <div class="info-box">
             Intervalle configuré
-            <strong>400 ms</strong>
+            <strong>200 ms</strong>
           </div>
           <div class="info-box">
             Temps écoulé
@@ -219,61 +281,51 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       const resetButtonEl = document.getElementById('reset-button');
       const boostButtonEl = document.getElementById('boost-button');
 
-      const COUNT_DELAY_MS = 400;
-      let count = 0;
-      let running = true;
-      let countIntervalId = 0;
-      let startedAt = Date.now();
+      const COUNT_DELAY_MS = 200;
+      const socket = new WebSocket(`ws://${window.location.host}/ws`);
+
+      const state = {
+        count: 0,
+        running: true,
+        elapsedMs: 0,
+      };
 
       function render() {
-        countEl.textContent = count.toString();
-        statusEl.textContent = running
-          ? `Comptage actif · ${COUNT_DELAY_MS} ms entre chaque nombre`
-          : 'Comptage en pause';
-        toggleButtonEl.textContent = running ? 'Pause' : 'Reprendre';
+        countEl.textContent = state.count.toString();
+        elapsedEl.textContent = `${(state.elapsedMs / 1000).toFixed(1)} s`;
+        statusEl.textContent = state.running
+          ? `Comptage partagé actif · ${COUNT_DELAY_MS} ms entre chaque nombre`
+          : 'Comptage partagé en pause';
+        toggleButtonEl.textContent = state.running ? 'Pause' : 'Reprendre';
       }
 
-      function updateElapsed() {
-        const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-        elapsedEl.textContent = `${seconds} s`;
-      }
-
-      function startCounter() {
-        window.clearInterval(countIntervalId);
-        countIntervalId = window.setInterval(() => {
-          count += 1;
-          render();
-        }, COUNT_DELAY_MS);
-      }
-
-      toggleButtonEl.addEventListener('click', () => {
-        running = !running;
-
-        if (running) {
-          startCounter();
-        } else {
-          window.clearInterval(countIntervalId);
+      function sendCommand(command) {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(command);
         }
+      }
 
+      socket.addEventListener('open', () => {
         render();
       });
 
-      resetButtonEl.addEventListener('click', () => {
-        count = 0;
-        startedAt = Date.now();
+      socket.addEventListener('message', (event) => {
+        const nextState = JSON.parse(event.data);
+        state.count = nextState.count;
+        state.running = nextState.running;
+        state.elapsedMs = nextState.elapsedMs;
         render();
-        updateElapsed();
       });
 
-      boostButtonEl.addEventListener('click', () => {
-        count += 10;
-        render();
+      socket.addEventListener('close', () => {
+        statusEl.textContent = 'Connexion perdue avec l\'ESP32';
       });
+
+      toggleButtonEl.addEventListener('click', () => sendCommand('toggle'));
+      resetButtonEl.addEventListener('click', () => sendCommand('reset'));
+      boostButtonEl.addEventListener('click', () => sendCommand('boost'));
 
       render();
-      startCounter();
-      window.setInterval(updateElapsed, 100);
-      updateElapsed();
     </script>
   </body>
 </html>
@@ -297,13 +349,46 @@ void setupAccessPoint() {
   Serial.println(accessPointIp);
 }
 
+void handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
+  AwsFrameInfo* info = static_cast<AwsFrameInfo*>(arg);
+
+  if (info == nullptr || !info->final || info->index != 0 || info->len != len || info->opcode != WS_TEXT) {
+    return;
+  }
+
+  String command;
+  command.reserve(len);
+  for (size_t index = 0; index < len; ++index) {
+    command += static_cast<char>(data[index]);
+  }
+
+  handleCommand(command);
+}
+
+void onWebSocketEvent(AsyncWebSocket* socket, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len) {
+  if (type == WS_EVT_CONNECT) {
+    client->text(buildStateJson());
+    return;
+  }
+
+  if (type == WS_EVT_DATA) {
+    handleWebSocketMessage(arg, data, len);
+  }
+}
+
 void setupWebServer() {
+  ws.onEvent(onWebSocketEvent);
+  server.addHandler(&ws);
+
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->send_P(200, "text/html", INDEX_HTML);
   });
 
   server.on("/health", HTTP_GET, [](AsyncWebServerRequest* request) {
-    request->send(200, "application/json", "{\"status\":\"ok\",\"mode\":\"counter\",\"delayMs\":400}");
+    String payload = "{\"status\":\"ok\",\"mode\":\"counter\",\"delayMs\":";
+    payload += COUNT_DELAY_MS;
+    payload += ",\"sharedState\":true}";
+    request->send(200, "application/json", payload);
   });
 
   server.begin();
@@ -313,9 +398,24 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
+  resetCounter();
   setupAccessPoint();
   setupWebServer();
 }
 
 void loop() {
+  ws.cleanupClients();
+
+  if (!running) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  if (now - lastCountUpdateMs < COUNT_DELAY_MS) {
+    return;
+  }
+
+  lastCountUpdateMs += COUNT_DELAY_MS;
+  count += 1;
+  broadcastState();
 }
