@@ -8,6 +8,7 @@ constexpr char WIFI_PASSWORD[] = "12345678";
 constexpr char WEBSOCKET_PATH[] = "/ws";
 constexpr uint16_t HTTP_PORT = 80;
 constexpr size_t MAX_MESSAGE_LENGTH = 280;
+constexpr size_t MAX_CLIENTS = 32;
 
 AsyncWebServer server(HTTP_PORT);
 AsyncWebSocket ws(WEBSOCKET_PATH);
@@ -18,7 +19,7 @@ struct ClientInfo {
   uint32_t clientNumber;
 };
 
-ClientInfo clientInfos[10];
+ClientInfo clientInfos[MAX_CLIENTS];
 size_t clientInfoCount = 0;
 
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
@@ -290,6 +291,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
       let socket;
       let myClientId = 0;
+      let welcomeTimeoutId = 0;
 
       function getWsUrl() {
         const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -299,7 +301,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       function setConnectionState(connected) {
         statusDotEl.classList.toggle('connected', connected);
         statusTextEl.textContent = connected ? 'Connecté' : 'Déconnecté';
-        sendButtonEl.disabled = !connected;
+        sendButtonEl.disabled = !connected || myClientId === 0;
       }
 
       function autoScroll() {
@@ -345,18 +347,32 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
       function connectWebSocket() {
         socket = new WebSocket(getWsUrl());
+        clientIdEl.textContent = 'Attribution...';
+        myClientId = 0;
 
         socket.addEventListener('open', () => {
           setConnectionState(true);
+          window.clearTimeout(welcomeTimeoutId);
+          welcomeTimeoutId = window.setTimeout(() => {
+            if (myClientId === 0) {
+              clientIdEl.textContent = 'Non attribué';
+              addSystemMessage("Impossible de récupérer votre ID utilisateur. Vérifiez la connexion WebSocket côté ESP32.");
+              setConnectionState(false);
+            }
+          }, 3000);
         });
 
         socket.addEventListener('close', () => {
+          window.clearTimeout(welcomeTimeoutId);
+          myClientId = 0;
+          clientIdEl.textContent = 'Déconnecté';
           setConnectionState(false);
           addSystemMessage('Connexion perdue. Reconnexion...');
           window.setTimeout(connectWebSocket, 1500);
         });
 
         socket.addEventListener('error', () => {
+          window.clearTimeout(welcomeTimeoutId);
           setConnectionState(false);
         });
 
@@ -365,8 +381,18 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             const payload = JSON.parse(event.data);
 
             if (payload.type === 'welcome') {
+              window.clearTimeout(welcomeTimeoutId);
               myClientId = payload.clientNumber || 0;
+
+              if (myClientId === 0) {
+                clientIdEl.textContent = 'Non attribué';
+                addSystemMessage("Le serveur n'a pas pu attribuer d'ID utilisateur.");
+                setConnectionState(false);
+                return;
+              }
+
               clientIdEl.textContent = `Client n°${myClientId}`;
+              setConnectionState(true);
               addSystemMessage(`Vous avez rejoint le chat en tant que client n°${myClientId}.`);
               return;
             }
@@ -398,6 +424,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     </script>
   </body>
 </html>
+
 )rawliteral";
 
 String trimWhitespace(String value) {
@@ -497,11 +524,13 @@ uint32_t registerClient(uint32_t socketId) {
     return clientInfos[existingIndex].clientNumber;
   }
 
-  if (clientInfoCount < (sizeof(clientInfos) / sizeof(clientInfos[0]))) {
-    clientInfos[clientInfoCount++] = {socketId, nextClientNumber};
+  if (clientInfoCount >= MAX_CLIENTS) {
+    return 0;
   }
 
-  return nextClientNumber++;
+  const uint32_t clientNumber = nextClientNumber++;
+  clientInfos[clientInfoCount++] = {socketId, clientNumber};
+  return clientNumber;
 }
 
 void unregisterClient(uint32_t socketId) {
@@ -535,7 +564,8 @@ void broadcastSystemMessage(const String& text) {
 void sendWelcomeMessage(AsyncWebSocketClient* client, uint32_t clientNumber) {
   String payload = "{";
   payload += "\"type\":\"welcome\",";
-  payload += "\"clientNumber\":" + String(clientNumber);
+  payload += "\"clientNumber\":" + String(clientNumber) + ",";
+  payload += "\"timestamp\":" + String(millis());
   payload += "}";
   client->text(payload);
 }
@@ -582,6 +612,15 @@ void onWebSocketEvent(AsyncWebSocket* serverRef, AsyncWebSocketClient* client, A
   switch (type) {
     case WS_EVT_CONNECT: {
       const uint32_t clientNumber = registerClient(client->id());
+      if (clientNumber == 0) {
+        Serial.printf("[WS] Client rejected: socketId=%u IP=%s reason=max_clients_reached\n",
+                      client->id(),
+                      client->remoteIP().toString().c_str());
+        client->text("{\"type\":\"system\",\"clientNumber\":0,\"sender\":\"Système\",\"text\":\"Serveur saturé : impossible d'attribuer un ID utilisateur.\",\"timestamp\":" + String(millis()) + "}");
+        client->close();
+        break;
+      }
+
       Serial.printf("[WS] Client connected: socketId=%u clientNumber=%u IP=%s\n",
                     client->id(),
                     clientNumber,

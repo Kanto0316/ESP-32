@@ -266,6 +266,7 @@
 
       let socket;
       let myClientId = 0;
+      let welcomeTimeoutId = 0;
 
       function getWsUrl() {
         const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -275,7 +276,7 @@
       function setConnectionState(connected) {
         statusDotEl.classList.toggle('connected', connected);
         statusTextEl.textContent = connected ? 'Connecté' : 'Déconnecté';
-        sendButtonEl.disabled = !connected;
+        sendButtonEl.disabled = !connected || myClientId === 0;
       }
 
       function autoScroll() {
@@ -321,18 +322,32 @@
 
       function connectWebSocket() {
         socket = new WebSocket(getWsUrl());
+        clientIdEl.textContent = 'Attribution...';
+        myClientId = 0;
 
         socket.addEventListener('open', () => {
           setConnectionState(true);
+          window.clearTimeout(welcomeTimeoutId);
+          welcomeTimeoutId = window.setTimeout(() => {
+            if (myClientId === 0) {
+              clientIdEl.textContent = 'Non attribué';
+              addSystemMessage("Impossible de récupérer votre ID utilisateur. Vérifiez la connexion WebSocket côté ESP32.");
+              setConnectionState(false);
+            }
+          }, 3000);
         });
 
         socket.addEventListener('close', () => {
+          window.clearTimeout(welcomeTimeoutId);
+          myClientId = 0;
+          clientIdEl.textContent = 'Déconnecté';
           setConnectionState(false);
           addSystemMessage('Connexion perdue. Reconnexion...');
           window.setTimeout(connectWebSocket, 1500);
         });
 
         socket.addEventListener('error', () => {
+          window.clearTimeout(welcomeTimeoutId);
           setConnectionState(false);
         });
 
@@ -341,8 +356,18 @@
             const payload = JSON.parse(event.data);
 
             if (payload.type === 'welcome') {
+              window.clearTimeout(welcomeTimeoutId);
               myClientId = payload.clientNumber || 0;
+
+              if (myClientId === 0) {
+                clientIdEl.textContent = 'Non attribué';
+                addSystemMessage("Le serveur n'a pas pu attribuer d'ID utilisateur.");
+                setConnectionState(false);
+                return;
+              }
+
               clientIdEl.textContent = `Client n°${myClientId}`;
+              setConnectionState(true);
               addSystemMessage(`Vous avez rejoint le chat en tant que client n°${myClientId}.`);
               return;
             }
